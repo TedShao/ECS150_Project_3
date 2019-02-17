@@ -23,21 +23,20 @@ queue_t tps_queue = NULL;
 
 /***** Internal Functions *****/
 /* Enqueue item, if queue is null, create queue */
-void tps_queue_enqueue_check(queue_t *queue)
+void tps_queue_enqueue_check(queue_t *queue, void *data)
 {
 	/* If the queue is null, allocate a new queue */
 	if (*queue == NULL){
 		*queue = queue_create();
 	} 
 	
-	pthread_t tid = pthread_self();
-	queue_enqueue(*queue, (void*)tid);
+	queue_enqueue(*queue, data);
 
 	return;
 }
 
 /* Dequeue item, if queue is empty, deallocate and set to NULL */
-void uthread_queue_dequeue_check(queue_t *queue, void **data)
+void tps_queue_dequeue_check(queue_t *queue, void **data)
 {
 	/* dequeue item */
 	queue_dequeue(*queue, data); 
@@ -52,7 +51,7 @@ void uthread_queue_dequeue_check(queue_t *queue, void **data)
 }
 
 /* Delete item, if queue is empty, deallocate and set to NULL */
-void uthread_queue_delete_check(queue_t *queue, void *data)
+void tps_queue_delete_check(queue_t *queue, void *data)
 {
 	/* delete item */
 	queue_delete(*queue, data); 
@@ -97,16 +96,17 @@ int tps_init(int segv)
 
 int tps_create(void)
 {	
-	tps_t new_tps;
+	tps_t new_tps = NULL;
+	void *void_ptr = NULL;
 	pthread_t tid;
-	void *void_ptr;
 
 	tid = pthread_self();
 
 	enter_critical_section();
 
 	/* Check if tps already created */
-	if (queue_iterate(tps_queue, find_tid, (void*)tid, NULL) == 1) {
+	queue_iterate(tps_queue, find_tid, (void*)tid, &void_ptr);
+	if (void_ptr != NULL) {
 		exit_critical_section();
 		return -1;
 	}
@@ -123,7 +123,7 @@ int tps_create(void)
 	new_tps->ptr = (char*) void_ptr;
 	new_tps->tid = tid;
 
-	queue_enqueue(tps_queue, (void*) new_tps);
+	tps_queue_enqueue_check(&tps_queue, (void*) new_tps);
 
 	exit_critical_section();
 
@@ -132,16 +132,17 @@ int tps_create(void)
 
 int tps_destroy(void)
 {
-	tps_t del_tps;
+	tps_t del_tps = NULL;
+	void *void_ptr = NULL;
 	pthread_t tid;
-	void *void_ptr;
 
 	tid = pthread_self();
 
 	enter_critical_section();
 
 	/* Check if tid has allocated tps */
-	if (queue_iterate(tps_queue, find_tid, (void*)tid, (void**)&void_ptr) == 0) {
+	queue_iterate(tps_queue, find_tid, (void*)tid, (void**)&void_ptr);
+	if (void_ptr == NULL) {
 		exit_critical_section();
 		return -1;
 	}
@@ -152,7 +153,7 @@ int tps_destroy(void)
 	free(del_tps);
 
 	/* Delete tps struct from queue */
-	queue_delete(tps_queue, (void*)del_tps);
+	tps_queue_delete_check(&tps_queue, (void*)del_tps);
 
 	exit_critical_section();
 
@@ -161,9 +162,9 @@ int tps_destroy(void)
 
 int tps_read(size_t offset, size_t length, char *buffer)
 {
-	tps_t access_tps;
+	tps_t access_tps = NULL;
+	void *void_ptr = NULL;
 	pthread_t tid;
-	void *void_ptr;
 
 	tid = pthread_self();
 
@@ -173,15 +174,21 @@ int tps_read(size_t offset, size_t length, char *buffer)
 	 * Check for:
 	 * -buffer is NULL
 	 * -out of bounds
-	 * -nonexistant tps
 	 */
 	if (buffer == NULL) {
 		exit_critical_section();
 		return -1;
-	} else if ((offset + length) >= TPS_SIZE) {
+	} else if (offset >= TPS_SIZE) {
 		exit_critical_section();
 		return -1;
-	} else if (queue_iterate(tps_queue, find_tid, (void*)tid, (void**)&void_ptr) == 0) {
+	} else if ((offset + length) > TPS_SIZE) {
+		exit_critical_section();
+		return -1;
+	} 
+
+	/* Check for tps for current tid */
+	queue_iterate(tps_queue, find_tid, (void*)tid, &void_ptr);
+	if ( void_ptr == NULL) {
 		exit_critical_section();
 		return -1;
 	}
@@ -195,9 +202,9 @@ int tps_read(size_t offset, size_t length, char *buffer)
 
 int tps_write(size_t offset, size_t length, char *buffer)
 {
-	tps_t access_tps;
+	tps_t access_tps = NULL;
+	void *void_ptr = NULL;
 	pthread_t tid;
-	void *void_ptr;
 
 	tid = pthread_self();
 
@@ -207,44 +214,55 @@ int tps_write(size_t offset, size_t length, char *buffer)
 	 * Check for:
 	 * -buffer is NULL
 	 * -out of bounds
-	 * -nonexistant tps
 	 */
 	if (buffer == NULL) {
 		exit_critical_section();
 		return -1;
-	} else if ((offset + length) >= TPS_SIZE) {
+	} else if (offset >= TPS_SIZE) {
 		exit_critical_section();
 		return -1;
-	} else if (queue_iterate(tps_queue, find_tid, (void*)tid, (void**)&void_ptr) == 0) {
+	} else if ((offset + length) > TPS_SIZE) {
+		exit_critical_section();
+		return -1;
+	} 
+
+	/* Check for tps for current tid */
+	queue_iterate(tps_queue, find_tid, (void*)tid, (void**)&void_ptr);
+	if (void_ptr == NULL) {
+		printf("tps_write: current tps not found\n");
 		exit_critical_section();
 		return -1;
 	}
 
 	access_tps = (tps_t) void_ptr;
 	memcpy((void*)(access_tps->ptr + offset), buffer, length);
-
 	exit_critical_section();
 	return 0;
 }
 
 int tps_clone(pthread_t tid)
 {
-	tps_t cpy_tps;
-	tps_t new_tps;
+	void *void_ptr = NULL;
+	tps_t cpy_tps = NULL;
+	tps_t new_tps = NULL;
 	pthread_t current_tid;
-	void *void_ptr;
+	
 
 	current_tid = pthread_self();
 
 	enter_critical_section();
 
 	/* Check if current tid already has tps */
-	if (queue_iterate(tps_queue, find_tid, (void*)current_tid, NULL) != 0) {
+	queue_iterate(tps_queue, find_tid, (void*)current_tid, (void**)&void_ptr);
+	if (void_ptr != NULL) {
 		exit_critical_section();
 		return -1;
 	} 
+
 	/* Check if passed tid has tps */
-	if (queue_iterate(tps_queue, find_tid, (void*)tid, (void**)&void_ptr) == 0) {
+	void_ptr = NULL;
+	queue_iterate(tps_queue, find_tid, (void*)tid, (void**)&void_ptr);
+	if (void_ptr == NULL) {
 		exit_critical_section();
 		return -1;
 	}
@@ -261,14 +279,14 @@ int tps_clone(pthread_t tid)
 	
 	/* Create new tps struct */
 	new_tps = (tps_t) malloc(sizeof(struct tps));
-	new_tps->tid = tid;
+	new_tps->tid = current_tid;
 	new_tps->ptr = (char*) void_ptr;
 
 	/* Copy memory */
 	memcpy((new_tps->ptr), (cpy_tps->ptr), TPS_SIZE);
 
 	/* Enqueue the new tps */
-	queue_enqueue(tps_queue, (void*) new_tps);
+	tps_queue_enqueue_check(&tps_queue, (void*) new_tps);
 
 	exit_critical_section();
 	return 0;
