@@ -350,7 +350,6 @@ int tps_clone(pthread_t tid)
 	tps_t new_tps = NULL;
 	pthread_t current_tid;
 	
-
 	current_tid = pthread_self();
 
 	enter_critical_section();
