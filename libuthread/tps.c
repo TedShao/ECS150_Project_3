@@ -14,9 +14,14 @@
 #include "tps.h"
 
 /***** Data Structures *****/
+typedef struct page {
+	char *ptr;
+	unsigned int ref_count;
+} *page_t;
+
 typedef struct tps {
 	pthread_t tid;
-	char *ptr;
+	page_t page;
 } *tps_t;
 
 /***** Global Variables *****/
@@ -84,7 +89,7 @@ int find_ptr(void *data, void *arg)
 {
     tps_t tps = (tps_t)data;
 
-    if ((void*)tps->ptr == arg) {
+    if ((void*)tps->page->ptr == arg) {
         return 1;
     }
 
@@ -165,14 +170,16 @@ int tps_create(void)
 	}
 	
 	/* Create new tps struct */
-	new_tps = (tps_t) malloc(sizeof(struct tps));
-	new_tps->ptr = (char*) void_ptr;
-	new_tps->tid = tid;
+	new_tps       = (tps_t)  malloc(sizeof(struct tps));
+	new_tps->page = (page_t) malloc(sizeof(struct page));
+
+	new_tps->page->ptr       = (char*) void_ptr;
+	new_tps->page->ref_count = 1;
+	new_tps->tid             = tid;
 
 	tps_queue_enqueue_check(&tps_queue, (void*) new_tps);
 
 	exit_critical_section();
-
 	return 0;
 }
 
@@ -193,17 +200,24 @@ int tps_destroy(void)
 		return -1;
 	}
 
-	/* Unmap memory and free struct data */
 	del_tps = (tps_t)void_ptr;
-	mprotect(del_tps->ptr, TPS_SIZE, PROT_READ | PROT_WRITE);
-	munmap(del_tps->ptr, TPS_SIZE);
-	free(del_tps);
 
-	/* Delete tps struct from queue */
-	tps_queue_delete_check(&tps_queue, (void*)del_tps);
+	/* 
+	 * Check page reference count
+	 * -If 1: Unmap memory, free struct data, and dequeue
+	 * -else: decrement ref_count
+	 */
+	if (del_tps->page->ref_count == 1) {
+		mprotect(del_tps->page->ptr, TPS_SIZE, PROT_READ | PROT_WRITE);
+		munmap(del_tps->page->ptr, TPS_SIZE);
+		free(del_tps->page);
+		free(del_tps);
+		tps_queue_delete_check(&tps_queue, (void*)del_tps);
+	} else {
+		del_tps->page->ref_count -= 1;
+	}
 
 	exit_critical_section();
-
 	return 0;
 }
 
@@ -243,9 +257,9 @@ int tps_read(size_t offset, size_t length, char *buffer)
 	access_tps = (tps_t) void_ptr;
 
 	/* Allow temporary read access */
-	mprotect(access_tps->ptr, TPS_SIZE, PROT_READ);
-	memcpy(buffer, (void*)(access_tps->ptr + offset), length);
-	mprotect(access_tps->ptr, TPS_SIZE, PROT_NONE);
+	mprotect(access_tps->page->ptr, TPS_SIZE, PROT_READ);
+	memcpy(buffer, (void*)(access_tps->page->ptr + offset), length);
+	mprotect(access_tps->page->ptr, TPS_SIZE, PROT_NONE);
 
 	exit_critical_section();
 	return 0;
@@ -280,17 +294,50 @@ int tps_write(size_t offset, size_t length, char *buffer)
 	/* Check for tps for current tid */
 	queue_iterate(tps_queue, find_tid, (void*)tid, (void**)&void_ptr);
 	if (void_ptr == NULL) {
-		printf("tps_write: current tps not found\n");
 		exit_critical_section();
 		return -1;
 	}
 
 	access_tps = (tps_t) void_ptr;
 
-	/* Allow temporary write access */
-	mprotect(access_tps->ptr, TPS_SIZE, PROT_READ | PROT_WRITE);
-	memcpy((void*)(access_tps->ptr + offset), buffer, length);
-	mprotect(access_tps->ptr, TPS_SIZE, PROT_NONE);
+	/* Copy on Write if necessary */
+	if (access_tps->page->ref_count == 1) {
+		/* Allow temporary write access */
+		mprotect(access_tps->page->ptr, TPS_SIZE, PROT_READ | PROT_WRITE);
+		memcpy((void*)(access_tps->page->ptr + offset), buffer, length);
+		mprotect(access_tps->page->ptr, TPS_SIZE, PROT_NONE);
+	} else {
+		page_t old_page;
+
+		/* Save shared page into variable and decrement ref_count */
+		old_page = access_tps->page;
+		old_page->ref_count -= 1;
+
+		/* Allocate memory and check for proper allocation */
+		void_ptr = mmap(NULL, TPS_SIZE, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (void_ptr == MAP_FAILED) {
+			exit_critical_section();
+			return -1;
+		}
+
+		/* Create new page */
+		access_tps->page = (page_t) malloc(sizeof(struct page));
+		access_tps->page->ref_count = 1;
+		access_tps->page->ptr       = (char*) void_ptr;
+		access_tps->tid             = tid;
+
+		/* Unprotect memory */
+		mprotect(access_tps->page->ptr, TPS_SIZE, PROT_READ | PROT_WRITE);
+		mprotect(old_page->ptr, TPS_SIZE, PROT_READ);
+
+		/* Copy memory and write buffer */
+		memcpy((access_tps->page->ptr), (old_page->ptr), TPS_SIZE);
+		memcpy((void*)(access_tps->page->ptr + offset), buffer, length);
+
+		/* Protect memory */
+		mprotect(access_tps->page->ptr, TPS_SIZE, PROT_NONE);
+		mprotect(old_page->ptr, TPS_SIZE, PROT_NONE);
+	}
 
 	exit_critical_section();
 	return 0;
@@ -326,28 +373,13 @@ int tps_clone(pthread_t tid)
 	/* Get the tps clone */
 	cpy_tps = (tps_t) void_ptr;
 
-	/* Allocate memory and check for proper allocation */
-	void_ptr = mmap(NULL, TPS_SIZE, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (void_ptr == MAP_FAILED) {
-		exit_critical_section();
-		return -1;
-	}
-	
-	/* Create new tps struct */
+	/* Create new tps*/
 	new_tps = (tps_t) malloc(sizeof(struct tps));
 	new_tps->tid = current_tid;
-	new_tps->ptr = (char*) void_ptr;
 
-	/* Unprotect memory */
-	mprotect(new_tps->ptr, TPS_SIZE, PROT_READ | PROT_WRITE);
-	mprotect(cpy_tps->ptr, TPS_SIZE, PROT_READ);
-
-	/* Copy memory */
-	memcpy((new_tps->ptr), (cpy_tps->ptr), TPS_SIZE);
-
-	/* Protect memory */
-	mprotect(cpy_tps->ptr, TPS_SIZE, PROT_NONE);
-	mprotect(new_tps->ptr, TPS_SIZE, PROT_NONE);
+	/* New tps will point to exisiting page struct and increment ref_count */
+	new_tps->page = cpy_tps->page;
+	new_tps->page->ref_count += 1;
 
 	/* Enqueue the new tps */
 	tps_queue_enqueue_check(&tps_queue, (void*) new_tps);
