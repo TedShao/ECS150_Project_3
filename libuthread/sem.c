@@ -92,11 +92,15 @@ int sem_getvalue(sem_t sem, int *sval)
 		return -1;
 	}
 
+	enter_critical_section();
+
 	if (sem->count > 0) {
 		*sval = sem->count;
 	} else {
 		*sval = (-1) * queue_length(sem->wait_queue);
 	}
+
+	exit_critical_section();
 
 	return 0;
 }
