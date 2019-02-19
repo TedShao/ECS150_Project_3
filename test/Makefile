@@ -3,7 +3,8 @@ programs := \
 	sem_count.x \
 	sem_buffer.x \
 	sem_prime.x \
-	tps.x
+	tps.x \
+	tps_testsuite.x
 
 # User-level thread library
 UTHREADLIB := libuthread
@@ -55,6 +56,9 @@ objs := $(patsubst %.x,%.o,$(programs))
 # Include dependencies
 deps := $(patsubst %.o,%.d,$(objs))
 -include $(deps)
+
+# Use mmap wrapper on tps_testsuite.x
+tps_testsuite.x: LDFLAGS += -Wl,--wrap=mmap
 
 # Rule for libuthread.a
 $(libuthread):

@@ -29,7 +29,7 @@ static queue_t tps_queue = NULL;
 
 /***** Internal Functions *****/
 /* Enqueue item, if queue is null, create queue */
-void tps_queue_enqueue_check(queue_t *queue, void *data)
+static void tps_queue_enqueue_check(queue_t *queue, void *data)
 {
 	/* If the queue is null, allocate a new queue */
 	if (*queue == NULL){
@@ -41,23 +41,8 @@ void tps_queue_enqueue_check(queue_t *queue, void *data)
 	return;
 }
 
-/* Dequeue item, if queue is empty, deallocate and set to NULL */
-void tps_queue_dequeue_check(queue_t *queue, void **data)
-{
-	/* dequeue item */
-	queue_dequeue(*queue, data); 
-
-	/* If the queue is empty, destroy and set to NULL */
-	if (queue_length(*queue) == 0){
-		queue_destroy(*queue);
-		*queue = NULL;
-	}
-
-	return;
-}
-
 /* Delete item, if queue is empty, deallocate and set to NULL */
-void tps_queue_delete_check(queue_t *queue, void *data)
+static void tps_queue_delete_check(queue_t *queue, void *data)
 {
 	/* delete item */
 	queue_delete(*queue, data); 
@@ -72,8 +57,7 @@ void tps_queue_delete_check(queue_t *queue, void *data)
 }
 
 /* Find tps for associated TID */
-/* Find TID in a queue */
-int find_tid(void *data, void *arg)
+static int find_tid(void *data, void *arg)
 {
     tps_t tps = (tps_t)data;
     pthread_t tid = (pthread_t)arg;
@@ -84,8 +68,8 @@ int find_tid(void *data, void *arg)
 
     return 0;
 }
-
-int find_ptr(void *data, void *arg)
+/* Find tps for associated pointer */
+static int find_ptr(void *data, void *arg)
 {
     tps_t tps = (tps_t)data;
 
@@ -95,7 +79,7 @@ int find_ptr(void *data, void *arg)
 
     return 0;
 }
-
+/* Handler for seg fault on tps access */
 static void segv_handler(int sig, siginfo_t *si, void *context)
 {
     /*
