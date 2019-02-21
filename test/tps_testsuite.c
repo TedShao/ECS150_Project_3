@@ -121,26 +121,37 @@ void *error_thread(void *arg)
 }
 
 /* Default */
-void *read_write_thread(void *arg)
+void read_write_test(void)
 {
 	TEST_START;
 
 	
 
 	TEST_END;
-	return NULL;
+	return;
 }
-void *clone_thread(void *arg)
+void clone_test(void)
 {
 	TEST_START;
 
 	
+	
 
 	TEST_END;
-	return NULL;
+	return;
 }
 void *default_thread(void *arg)
-{	
+{
+	/* 
+	 * All test functions testing the functionality of API here and 
+	 * does not include error handling and memory protection.
+	 * Those tests are run if the respective command line argurment
+	 * is provided
+	 */
+	read_write_test();
+	clone_test();
+
+	return NULL;
 }
 
 
