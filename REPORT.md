@@ -18,9 +18,9 @@ keep track of the avaible number of resources.
 ## Create and Destroy
 
 Upon calling *sem_create(size)*, the passed semaphore will be initialized to
-have a count of size and the queue will be created. When *sem_destroy()* is called,
-it will check to make sure the are no threads currently being blocked and then
-destroy the queue and free the passed semaphore pointer.
+have a count of size and the queue will be created. When *sem_destroy()* is
+called, it will check to make sure the are no threads currently being blocked
+and then destroy the queue and free the passed semaphore pointer.
 
 ## Up and Down
 
@@ -39,8 +39,8 @@ and a ref_count to know how many threads are using this storage space. This
 ref_count is important for the copy on write functionality.
 
     typedef struct page {
-	    char *ptr;
-	    unsigned int ref_count;
+        char *ptr;
+        unsigned int ref_count;
     } *page_t;
 
 The second structure is a tps_t that holds a thread ID and a pointer to the
@@ -48,8 +48,8 @@ previously described page struct. This allows multiple threads to point to the
 same memory after a clone.
 
     typedef struct tps {
-	    pthread_t tid;
-	    page_t page;
+        pthread_t tid;
+        page_t page;
     } *tps_t;
 
 Since we are provided a queue with and an API that allows us to search for
@@ -69,13 +69,13 @@ std error.
 
 ## TPS Create and Destroy
 When the user calls tps_create, the tps_queue is checked to make sure a tps
-isn't already created for the current thread. If one already exists, the function
-returns -1, otherwise a new **tps_t** is created containing...
+isn't already created for the current thread. If one already exists, the
+function returns -1, otherwise a new **tps_t** is created containing...
 - a page holding the allocated memory of size TPS_SIZE and ref_count set to 1.
   The memory allocated here is protected and cannot be read or written to. In
   tps_read and write the access rights are temporarily modified.
 - a tid holding the current pthread tid
-    
+
 This new tps is then enqueued into the tps_queue. 
 
 When the user calls tps_destroy, tps_queue is checked to make sure the thread
@@ -88,10 +88,10 @@ is freed and deleted from the tps_queue.
 In both tps_read and tps_write, an initial check is performed to make sure the
 buffer is not null, the offset and length are in the bounds of the TPS, and the
 current thread has a tps in tps_queue. After these checks, the tps is found in
-the queue. The ptr in the referenced page has the address of the allocated memory
-and is then temporarily given read rights. The proper data is then stored into
-the buffer using memcpy. If this is a cloned page that has yet to write to the
-tps, this function will not copy the page.
+the queue. The ptr in the referenced page has the address of the allocated
+memory and is then temporarily given read rights. The proper data is then stored
+into the buffer using memcpy. If this is a cloned page that has yet to write to
+the tps, this function will not copy the page.
 
 The implementation for tps_write is more complicated since we need the copy on
 write functionality. Once the function performs the initial checks, the ref
@@ -104,8 +104,8 @@ Then this new page is written to with what is contained in buffer using memcpy.
 ## TPS Clone
 When the user clones a tps, a new tps is created, but a new page is not. The new
 tps simply points to the same page as the cloned tps and increments ref_count.
-Only upon calling tps_write from any of the threads referencing this page will a new
-page be created and the data copied.
+Only upon calling tps_write from any of the threads referencing this page will a
+new page be created and the data copied.
 
 # Testing
 
