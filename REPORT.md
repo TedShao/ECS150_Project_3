@@ -73,7 +73,7 @@ isn't already created for the current thread. If one already exists, the functio
 returns -1, otherwise a new **tps_t** is created containing...
 - a page holding the allocated memory of size TPS_SIZE and ref_count set to 1.
   The memory allocated here is protected and cannot be read or written to. In
-  tps_read and write the access writes are temporarily modified.
+  tps_read and write the access rights are temporarily modified.
 - a tid holding the current pthread tid
     
 This new tps is then enqueued into the tps_queue. 
@@ -88,7 +88,7 @@ is freed and deleted from the tps_queue.
 In both tps_read and tps_write, an initial check is performed to make sure the
 buffer is not null, the offset and length are in the bounds of the TPS, and the
 current thread has a tps in tps_queue. After these checks, the tps is found in
-the queue. The ptr in referenced page has the address of the allocated memory
+the queue. The ptr in the referenced page has the address of the allocated memory
 and is then temporarily given read rights. The proper data is then stored into
 the buffer using memcpy. If this is a cloned page that has yet to write to the
 tps, this function will not copy the page.
@@ -151,7 +151,7 @@ This test is more involved than the others and checks multiple features of
 cloning.
 
 - Proper cloning of a tps
-- New memory is not allocated on tps_create or tps_read
+- New memory is not allocated on tps_clone or tps_read
 - Writing to a cloned tps does not modify the original or vice versa
 - New memory is allocated only on a call to write
 
@@ -159,11 +159,3 @@ This test is performed by using semaphores to precisely switch between two
 threads and performing cloning, reading and writing in each one and checking for
 the expected values. In addition the mmap wrapper is used to check for when new
 memory is allocated.
-
-
-
-
-
-
-
-
