@@ -33,7 +33,14 @@ void *__wrap_mmap(void *addr, size_t len, int prot, int flags, int fildes, off_t
 }
 
 /***** Threads *****/
-/* Protection */
+/* 
+ * Protection Testing 
+ * -This thread will check the correct calling of our custom segvhandler 
+ * -It attempts to write to write to an address within the tps 
+ * -Upon success this test progam will print to std error the provided error
+ * message and stop the program. For this reason this test is separate from the
+ * other tests and must be called by adding the command line argument "protection".
+ * */
 void *protection_thread(void *arg) 
 {	TEST_START;
 
@@ -52,7 +59,13 @@ void *protection_thread(void *arg)
 	return NULL;
 }
 
-/* Error */
+/* 
+ * Error Testing
+ * - These threads check all the possibilities when the api function should return
+ * -1.
+ * - These tests are separate from the other tests. To run this have "error" as
+ *   a runtime argument. 
+ */
 void *error_helper_thread(void *arg)
 {
 	sem_down(sem1);
@@ -120,34 +133,132 @@ void *error_thread(void *arg)
 	return NULL;
 }
 
-/* Default */
+/* 
+ * Default Testing 
+ * - These tests will check the proper functionality of the API
+ * - default_thread is the encapsulating thread that will be started by main.
+ *   This thread will then run all the test functions.
+ */
+/* Reading and writing tests */
 void read_write_test(void)
 {
 	TEST_START;
 
-	
+	char msg1[TPS_SIZE] = "This is a test message";
+	char buffer[TPS_SIZE] = "";
 
+	tps_create();
+
+	/* confirm value written equals value read */
+	tps_write(0,TPS_SIZE,msg1);
+	tps_read(0,TPS_SIZE,buffer);
+	assert(strcmp(buffer,msg1) == 0);
+
+	/* Check offset read functionality by reading "test" */
+	tps_read(10, 4, buffer);
+	buffer[4] = '\0';
+	assert(strcmp(buffer,"test") == 0);
+
+	/*
+	 * Check offset write by changing tps to 
+	 * "This is a modified message"
+	 */
+	tps_write(10, 17,"modified message");
+	tps_read(0,TPS_SIZE,buffer);
+	assert(strcmp(buffer, "This is a modified message") == 0);
+
+	assert(tps_destroy() == 0);
+	
 	TEST_END;
 	return;
 }
+
+/* Cloning tests */
+void *clone_helper_thread(void *arg)
+{
+	char *msg1 = (char*) arg;
+	char buffer[TPS_SIZE] = "";
+	
+	/* Create tps and write msg1 */
+	sem_down(sem1);
+	tps_create();
+	tps_write(0, TPS_SIZE, msg1);
+	sem_up(sem2);
+
+	/* Read tps */
+	sem_down(sem1);
+	tps_read(0,TPS_SIZE,buffer);
+	assert(strcmp(buffer,msg1) == 0);
+	sem_up(sem2);
+	
+	/* Confirm cloned tps modification does not modify this tps */
+	sem_down(sem1);
+	tps_read(0,TPS_SIZE,buffer);
+	assert(strcmp(buffer,msg1) == 0);
+	tps_destroy();
+	sem_up(sem2);
+
+	return NULL;
+}
+
 void clone_test(void)
 {
 	TEST_START;
 
+	char msg1[TPS_SIZE] = "This is the original thread";
+	char msg2[TPS_SIZE] = "This is the cloned thread";
+	char buffer[TPS_SIZE];
+	void *old_mmap_addr;
+	pthread_t tid;
+
+	/* 
+	 * Create clone helper thread for clone checking, block this thread until
+	 * the helper thread makes its tps and writes msg1.
+	 */
+	pthread_create(&tid, NULL, clone_helper_thread, (void*)msg1);
+	sem_up(sem1);
+	sem_down(sem2);
+
+	/* 
+	 * Save current lates_mmap_addr to later check that no new memory is
+	 * allocated when tps is cloned. (copy on write feature)
+	 */
+	old_mmap_addr = latest_mmap_addr;
+
+	/* Clone the helper threads tps */
+	tps_clone(tid);
+
+	/* Check cloned properly, and no new memory is allocated after read */
+	tps_read(0,TPS_SIZE,buffer);
+	assert(strcmp(buffer,msg1) == 0);
+	assert(old_mmap_addr == latest_mmap_addr);
 	
-	
+	/* Allow helper thread to read shared page */
+	sem_up(sem1);
+	sem_down(sem2);
+
+	/* Confirm after original tps reads, still no new allocation */
+	assert(old_mmap_addr == latest_mmap_addr);
+
+	/* Now write to tps and switch to helper thread */
+	tps_write(0,TPS_SIZE,msg2);
+	sem_up(sem1);
+	sem_down(sem2);
+
+	/* Confirm Copy on Write */
+	tps_read(0, TPS_SIZE, buffer);
+	assert(strcmp(buffer,msg2) == 0);
+	assert(old_mmap_addr != latest_mmap_addr);
+
+	tps_destroy();
 
 	TEST_END;
 	return;
 }
+
+/* Default thread to be run without runtime args */
 void *default_thread(void *arg)
 {
-	/* 
-	 * All test functions testing the functionality of API here and 
-	 * does not include error handling and memory protection.
-	 * Those tests are run if the respective command line argurment
-	 * is provided
-	 */
 	read_write_test();
 	clone_test();
 
